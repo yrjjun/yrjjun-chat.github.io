@@ -4,9 +4,210 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RSA加密聊天室</title>
-    <!-- 修改样式部分保持不变，主要调整HTML结构和JavaScript逻辑 -->
     <style>
-        /* 原有样式保持不变 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #f0f2f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0 auto;
+            padding: 16px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        @media (min-width: 768px) {
+            .container {
+                max-width: 768px;
+            }
+        }
+
+        .login-container {
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .chat-container {
+            display: none;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .input-container {
+            padding: 16px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 8px;
+            background: white;
+        }
+
+        .message {
+            margin: 8px 0;
+            padding: 12px;
+            border-radius: 16px;
+            max-width: 80%;
+            word-wrap: break-word;
+            position: relative;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.sent {
+            background: #0084ff;
+            color: white;
+            margin-left: auto;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.received {
+            background: #e9ecef;
+            color: black;
+            margin-right: auto;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message .nickname {
+            font-size: 12px;
+            opacity: 0.7;
+            margin-bottom: 4px;
+        }
+
+        .message .time {
+            font-size: 10px;
+            opacity: 0.6;
+            margin-top: 4px;
+        }
+
+        .system-message {
+            text-align: center;
+            color: #666;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+
+        input[type="text"], 
+        textarea {
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            flex: 1;
+            font-size: 16px;
+            -webkit-appearance: none;
+            resize: vertical;
+        }
+
+        input:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #0084ff;
+        }
+
+        button {
+            padding: 12px 24px;
+            background: #0084ff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background: #0073e6;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        button:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+
+        .status {
+            text-align: center;
+            color: white;
+            margin: 8px 0;
+            padding: 8px;
+            font-size: 14px;
+            border-radius: 8px;
+        }
+
+        .status.connecting {
+            background: #ff9800;
+        }
+
+        .status.connected {
+            background: #28a745;
+        }
+
+        .status.disconnected {
+            background: #dc3545;
+        }
+
+        .input-group {
+            margin-bottom: 16px;
+        }
+
+        .input-label {
+            display: block;
+            margin-bottom: 8px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .error-message {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #ff4444;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            animation: slideDown 0.3s ease-out;
+        }
+
+        @keyframes slideDown {
+            from { top: -50px; }
+            to { top: 20px; }
+        }
     </style>
 </head>
 <body>
@@ -18,163 +219,252 @@
                 <input type="text" id="nickname" placeholder="请输入你的昵称">
             </div>
             
-            <div id="keySection">
+            <div id="keySection" style="display: none;">
                 <div class="input-group">
                     <label class="input-label">你的公钥（请分享）</label>
-                    <textarea id="publicKey" readonly rows="4" style="width:100%"></textarea>
+                    <textarea id="publicKey" readonly rows="3"></textarea>
                 </div>
-                <button onclick="generateKeyPair()" style="margin-bottom: 16px;">生成密钥对</button>
-                
                 <div class="input-group">
                     <label class="input-label">对方公钥</label>
-                    <textarea id="targetPublicKey" rows="4" placeholder="粘贴对方的公钥" style="width:100%"></textarea>
+                    <textarea id="targetPublicKey" rows="3" placeholder="粘贴对方的公钥"></textarea>
                 </div>
             </div>
 
-            <button onclick="joinChat()">加入聊天</button>
+            <button onclick="generateKeyPair()" id="generateBtn">生成密钥对</button>
+            <button onclick="joinChat()" style="margin-top: 16px;" id="joinBtn">加入聊天</button>
         </div>
 
-        <!-- 聊天容器保持不变 -->
+        <div class="chat-container" id="chatContainer">
+            <div class="status" id="status">准备连接...</div>
+            <div class="message-container" id="messages"></div>
+            <div class="input-container">
+                <input type="text" id="messageInput" placeholder="输入消息..." disabled>
+                <button onclick="sendMessage()" id="sendBtn" disabled>发送</button>
+            </div>
+        </div>
     </div>
 
-    <!-- 改用支持RSA的加密库 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.3.2/jsencrypt.min.js"></script>
-    <script src="https://npm.liuts.nyc.mn/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
     <script>
-        let client;
+        let client = null;
         let nickname = '';
-        let targetPublicKey = null;
         let crypt = new JSEncrypt();
         let decrypt = new JSEncrypt();
         let myTopic = '';
+        let targetPublicKey = '';
+
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            document.body.appendChild(errorDiv);
+            setTimeout(() => errorDiv.remove(), 3000);
+        }
+
+        function updateStatus(text, state) {
+            const status = document.getElementById('status');
+            status.textContent = text;
+            status.className = `status ${state}`;
+        }
 
         function generateKeyPair() {
-            crypt.getKey(() => {
-                decrypt.getKey(() => {
+            const generateBtn = document.getElementById('generateBtn');
+            generateBtn.disabled = true;
+            generateBtn.textContent = '生成中...';
+
+            crypt = new JSEncrypt({ default_key_size: 1024 });
+            
+            setTimeout(() => {
+                crypt.getKey(() => {
+                    decrypt.setPrivateKey(crypt.getPrivateKey());
                     document.getElementById('publicKey').value = crypt.getPublicKey();
-                    // 将私钥保存在内存中，不暴露给用户
                     document.getElementById('keySection').style.display = 'block';
+                    generateBtn.textContent = '重新生成密钥';
+                    generateBtn.disabled = false;
+                    document.getElementById('targetPublicKey').focus();
                 });
-            });
+            }, 50);
+        }
+
+        function validatePublicKey(pubKey) {
+            return pubKey.startsWith('-----BEGIN PUBLIC KEY-----') && 
+                   pubKey.endsWith('-----END PUBLIC KEY-----');
         }
 
         function joinChat() {
             nickname = document.getElementById('nickname').value.trim();
-            targetPublicKey = document.getElementById('targetPublicKey').value.trim();
             const myPublicKey = document.getElementById('publicKey').value;
+            targetPublicKey = document.getElementById('targetPublicKey').value.trim();
 
-            if (!nickname || !targetPublicKey || !myPublicKey) {
-                alert('请填写所有字段并生成密钥对！');
+            if (!nickname) {
+                showError('请输入昵称');
+                return;
+            }
+            if (!validatePublicKey(myPublicKey)) {
+                showError('请先生成有效的密钥对');
+                return;
+            }
+            if (!validatePublicKey(targetPublicKey)) {
+                showError('请输入有效的对方公钥');
                 return;
             }
 
-            // 生成自己的订阅topic（使用自己的公钥哈希）
-            myTopic = `rsa-chat/${CryptoJS.MD5(myPublicKey).toString()}`;
-            
-            // 隐藏登录界面，显示聊天界面（同原代码）
             document.getElementById('loginForm').style.display = 'none';
             document.getElementById('chatContainer').style.display = 'flex';
+            updateStatus('正在连接服务器...', 'connecting');
 
-            // 连接MQTT服务器（配置同原代码）
-            const options = {
-                username: 'client',
-                password: 'client',
-                protocol: 'wss',
-                clientId: 'mqttjs_' + Math.random().toString(16).substr(2, 8)
-            };
-
-            client = mqtt.connect('wss://broker.emqx.io:8084/mqtt', options);
-
-            client.on('connect', () => {
-                document.getElementById('status').textContent = '已连接';
-                document.getElementById('status').className = 'status connected';
-                
-                // 订阅自己的topic
-                client.subscribe(myTopic);
-
-                // 发送系统消息（使用对方公钥加密）
-                const joinMessage = {
-                    type: 'join',
-                    nickname: nickname,
-                    timestamp: new Date().toISOString()
-                };
-                sendEncryptedMessage(joinMessage);
+            // 生成主题
+            myTopic = `rsa-chat/${CryptoJS.SHA256(myPublicKey).toString().substr(0, 16)}`;
+            
+            // 连接MQTT
+            const clientId = `rsaChat_${Date.now()}_${Math.random().toString(16).substr(2, 6)}`;
+            client = mqtt.connect('wss://test.mosquitto.org:8081', {
+                clientId: clientId,
+                clean: true,
+                reconnectPeriod: 5000
             });
 
-            // 其他MQTT事件处理保持不变
+            client.on('connect', () => {
+                updateStatus('已连接 - 等待消息...', 'connected');
+                client.subscribe(myTopic, { qos: 1 }, (err) => {
+                    if (!err) {
+                        sendSystemMessage('join');
+                        document.getElementById('messageInput').disabled = false;
+                        document.getElementById('sendBtn').disabled = false;
+                    }
+                });
+            });
+
+            client.on('message', (topic, payload) => {
+                if (topic !== myTopic) return;
+                
+                try {
+                    const decrypted = decrypt.decrypt(payload.toString());
+                    if (!decrypted) return;
+
+                    const msg = JSON.parse(decrypted);
+                    displayMessage(msg, msg.nickname === nickname);
+                } catch (e) {
+                    console.warn('消息解密失败:', e);
+                }
+            });
+
+            client.on('error', (err) => {
+                updateStatus(`连接错误: ${err.message}`, 'disconnected');
+            });
+
+            client.on('close', () => {
+                updateStatus('连接已断开', 'disconnected');
+            });
         }
 
-        function sendEncryptedMessage(messageObj) {
-            const encrypt = new JSEncrypt();
-            encrypt.setPublicKey(targetPublicKey);
-            
-            const messageString = JSON.stringify(messageObj);
-            const encrypted = encrypt.encrypt(messageString);
-            
-            if (!encrypted) {
-                alert('加密失败，请检查对方公钥是否正确');
-                return;
-            }
+        function sendSystemMessage(type) {
+            const message = {
+                type: type,
+                nickname: nickname,
+                timestamp: new Date().toISOString()
+            };
+            sendEncryptedMessage(message);
+        }
 
-            // 生成目标topic（使用对方公钥哈希）
-            const targetTopic = `rsa-chat/${CryptoJS.MD5(targetPublicKey).toString()}`;
-            client.publish(targetTopic, encrypted);
+        function sendEncryptedMessage(message) {
+            const encryptor = new JSEncrypt();
+            encryptor.setPublicKey(targetPublicKey);
+            
+            const targetTopic = `rsa-chat/${CryptoJS.SHA256(targetPublicKey).toString().substr(0, 16)}`;
+            const encrypted = encryptor.encrypt(JSON.stringify(message));
+            
+            if (encrypted) {
+                client.publish(targetTopic, encrypted, { qos: 1 });
+            }
         }
 
         function sendMessage() {
             const input = document.getElementById('messageInput');
-            const text = input.value.trim();
+            const content = input.value.trim();
+            if (!content) return;
 
-            if (!text) return;
+            const sendBtn = document.getElementById('sendBtn');
+            input.disabled = true;
+            sendBtn.disabled = true;
+            sendBtn.textContent = '发送中...';
 
             const message = {
                 type: 'message',
                 nickname: nickname,
-                content: text,
+                content: content,
                 timestamp: new Date().toISOString()
             };
 
-            sendEncryptedMessage(message);
-            input.value = '';
-            input.focus();
-            
-            // 本地显示自己发送的消息（不经过解密）
-            message.timestamp = new Date();
-            displayMessage(message, true);
-        }
-
-        function displayMessage(encryptedMessage, isSent = false) {
-            // 如果是自己发送的消息直接显示
-            if (isSent) {
-                createMessageElement(encryptedMessage, true);
-                return;
-            }
-
-            // 尝试解密消息
-            try {
-                const decrypted = decrypt.decrypt(encryptedMessage.toString());
-                if (!decrypted) {
-                    console.log('解密失败或不是发给你的消息');
-                    return;
+            setTimeout(() => {
+                try {
+                    sendEncryptedMessage(message);
+                    displayMessage({ ...message, timestamp: new Date() }, true);
+                    input.value = '';
+                } catch (e) {
+                    showError('发送失败');
+                } finally {
+                    input.disabled = false;
+                    sendBtn.disabled = false;
+                    sendBtn.textContent = '发送';
+                    input.focus();
                 }
-
-                const messageObj = JSON.parse(decrypted);
-                createMessageElement(messageObj, false);
-            } catch (e) {
-                console.error('解密失败:', e);
-            }
+            }, 50);
         }
 
-        function createMessageElement(messageObj, isSent) {
+        function displayMessage(msg, isSent) {
             const messagesDiv = document.getElementById('messages');
-            const messageElement = document.createElement('div');
-            const time = new Date(messageObj.timestamp);
+            const messageDiv = document.createElement('div');
+            
+            if (msg.type === 'join') {
+                messageDiv.className = 'system-message';
+                messageDiv.textContent = `${msg.nickname} 加入了聊天`;
+            } else {
+                messageDiv.className = `message ${isSent ? 'sent' : 'received'}`;
+                
+                const nicknameDiv = document.createElement('div');
+                nicknameDiv.className = 'nickname';
+                nicknameDiv.textContent = msg.nickname;
 
-            // 原有消息显示逻辑保持不变
-            // ...
+                const contentDiv = document.createElement('div');
+                contentDiv.textContent = msg.content;
+
+                const timeDiv = document.createElement('div');
+                timeDiv.className = 'time';
+                timeDiv.textContent = formatTime(new Date(msg.timestamp));
+
+                messageDiv.appendChild(nicknameDiv);
+                messageDiv.appendChild(contentDiv);
+                messageDiv.appendChild(timeDiv);
+            }
+
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        // 其他辅助函数和事件监听保持不变
+        function formatTime(date) {
+            return date.toLocaleTimeString('zh-CN', { 
+                hour: '2-digit', 
+                minute: '2-digit'
+            });
+        }
+
+        // 回车发送消息
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // 页面关闭时断开连接
+        window.addEventListener('beforeunload', () => {
+            if (client && client.connected) {
+                client.end();
+            }
+        });
     </script>
 </body>
 </html>
