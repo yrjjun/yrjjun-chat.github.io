@@ -321,9 +321,8 @@
             console.log('我的公钥:', myPublicKey);
             console.log('对方公钥:', targetPublicKey);
             console.log('我的订阅主题 (myTopic):', myTopic);
-            targetTopicForLog = `rsa-chat/${CryptoJS.SHA256(targetPublicKey).toString().substr(0, 16)}`;
-            console.log('对方的发布主题 (targetTopic, 用于发送消息给对方):', targetTopicForLog);
-
+            const calculatedTargetTopic = `rsa-chat/${CryptoJS.SHA256(targetPublicKey).toString().substr(0, 16)}`; // 正确计算 targetTopic
+            console.log('对方的发布主题 (targetTopic, 用于发送消息给对方):', calculatedTargetTopic); // 打印正确的 targetTopic
 
             // 连接MQTT
             const clientId = `rsaChat_${Date.now()}_${Math.random().toString(16).substr(2, 6)}`;
@@ -385,7 +384,7 @@
             const encryptor = new JSEncrypt();
             encryptor.setPublicKey(targetPublicKey);
 
-            const targetTopic = `rsa-chat/${CryptoJS.SHA256(targetPublicKey).toString().substr(0, 16)}`;
+            const targetTopic = `rsa-chat/${CryptoJS.SHA256(targetPublicKey).toString().substr(0, 16)}`; // 确保每次都基于 targetPublicKey 计算 targetTopic
             const encrypted = encryptor.encrypt(JSON.stringify(message));
 
             if (encrypted) {
