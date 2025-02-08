@@ -3,304 +3,141 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>加密聊天室</title>
-    <!-- 引入必要的库 -->
+    <title>加密聊天</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.2.1/jsencrypt.min.js"></script>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .chat-container {
-            border: 1px solid #ccc;
-            padding: 20px;
-            height: 400px;
-            overflow-y: auto;
-            margin-bottom: 20px;
-        }
-        .message {
+        body { margin: 20px; font-family: Arial; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .chat-box { 
+            height: 300px; 
+            border: 1px solid #ccc; 
+            overflow-y: auto; 
             margin: 10px 0;
             padding: 10px;
-            border-radius: 5px;
         }
-        .message.received {
-            background-color: #e9ecef;
-        }
-        .message.sent {
-            background-color: #007bff;
-            color: white;
-            margin-left: 20%;
-        }
-        .input-container {
-            display: flex;
-            gap: 10px;
-        }
-        input[type="text"] {
-            flex: 1;
-            padding: 10px;
-        }
-        button {
-            padding: 10px 20px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: #0056b3;
-        }
-        .key-info {
-            margin-top: 20px;
-            padding: 10px;
-            background-color: #f8f9fa;
-        }
-        .status {
-            margin-bottom: 10px;
-            padding: 10px;
-            background-color: #e9ecef;
-        }
+        .message { margin: 5px 0; padding: 5px; }
+        .received { background: #e9ecef; }
+        .sent { background: #d4edda; margin-left: 20%; }
+        textarea { width: 100%; margin: 10px 0; }
+        button { margin: 5px; padding: 5px 10px; }
     </style>
 </head>
 <body>
-    <h1>加密聊天室</h1>
-    <div class="status" id="connectionStatus">连接状态: 未连接</div>
-    <div class="chat-container" id="chatContainer"></div>
-    <div class="input-container">
-        <input type="text" id="messageInput" placeholder="输入消息...">
-        <button onclick="sendMessage()">发送</button>
-    </div>
-    <div class="key-info">
-        <button onclick="showKeys()">显示密钥信息</button>
-        <button onclick="generateNewKeys()">生成新密钥对</button>
-        <div id="keyInfo"></div>
+    <div class="container">
+        <h2>加密聊天</h2>
+        
+        <div>
+            <h3>密钥管理</h3>
+            <button onclick="generateKeys()">生成新的密钥对</button>
+            <div id="myKeys" style="word-break: break-all;"></div>
+        </div>
+
+        <div>
+            <h3>订阅主题</h3>
+            <input type="text" id="subTopic" placeholder="输入要订阅的主题(公钥)" style="width: 300px;">
+            <button onclick="subscribe()">订阅</button>
+        </div>
+
+        <div>
+            <h3>发送消息</h3>
+            <input type="text" id="pubTopic" placeholder="输入对方的公钥" style="width: 300px;">
+            <br>
+            <textarea id="message" rows="3" placeholder="输入消息"></textarea>
+            <br>
+            <button onclick="sendMessage()">发送</button>
+        </div>
+
+        <div class="chat-box" id="chatBox"></div>
     </div>
 
     <script>
-        // 密钥管理类
-        class KeyManager {
-            constructor() {
-                this.jsEncrypt = new JSEncrypt({default_key_size: 1024});
-                this.publicKey = null;
-                this.privateKey = null;
-            }
+        let client;
+        let myPrivateKey = '';
+        let myPublicKey = '';
 
-            generateKeyPair() {
-                this.jsEncrypt.getKey();
-                this.publicKey = this.jsEncrypt.getPublicKey();
-                this.privateKey = this.jsEncrypt.getPrivateKey();
-                
-                localStorage.setItem('publicKey', this.publicKey);
-                localStorage.setItem('privateKey', this.privateKey);
-                
-                return {
-                    publicKey: this.publicKey,
-                    privateKey: this.privateKey
-                };
-            }
-
-            loadExistingKeys() {
-                this.publicKey = localStorage.getItem('publicKey');
-                this.privateKey = localStorage.getItem('privateKey');
-                
-                if (!this.publicKey || !this.privateKey) {
-                    return this.generateKeyPair();
-                }
-                
-                return {
-                    publicKey: this.publicKey,
-                    privateKey: this.privateKey
-                };
-            }
-        }
-
-        // 聊天室类
-        class ChatRoom {
-            constructor(roomKey) {
-                this.roomKey = roomKey;
-                this.keyManager = new KeyManager();
-                this.keys = this.keyManager.loadExistingKeys();
-                this.participantsPublicKeys = new Map();
-                
-                this.mqttConfig = {
-                    host: 'broker.emqx.io',
-                    port: 8084,
-                    clientId: `mqtt_${Math.random().toString(16).slice(2, 8)}`
-                };
-                
-                this.topic = `chat/${CryptoJS.MD5(roomKey).toString()}`;
-                this.systemTopic = `${this.topic}/system`;
-                
-                this.setupMQTT();
-            }
-
-            setupMQTT() {
-                this.client = mqtt.connect(`wss://${this.mqttConfig.host}:${this.mqttConfig.port}`, {
-                    clientId: this.mqttConfig.clientId
-                });
-
-                this.client.on('connect', () => {
-                    console.log('Connected to MQTT broker');
-                    document.getElementById('connectionStatus').textContent = '连接状态: 已连接';
-                    this.client.subscribe(this.topic);
-                    this.client.subscribe(this.systemTopic);
-                    this.broadcastPublicKey();
-                });
-
-                this.client.on('message', (topic, message) => {
-                    if (topic === this.systemTopic) {
-                        this.handleSystemMessage(message);
-                    } else {
-                        this.handleChatMessage(message);
-                    }
-                });
-            }
-
-            broadcastPublicKey() {
-                const systemMessage = {
-                    type: 'PUBLIC_KEY',
-                    clientId: this.mqttConfig.clientId,
-                    publicKey: this.keys.publicKey
-                };
-                this.client.publish(this.systemTopic, JSON.stringify(systemMessage));
-            }
-
-            handleSystemMessage(message) {
-                try {
-                    const systemMessage = JSON.parse(message.toString());
-                    if (systemMessage.type === 'PUBLIC_KEY') {
-                        this.participantsPublicKeys.set(
-                            systemMessage.clientId,
-                            systemMessage.publicKey
-                        );
-                    }
-                } catch (error) {
-                    console.error('Error handling system message:', error);
-                }
-            }
-
-            encrypt(message, recipientPublicKey) {
-                const encrypt = new JSEncrypt();
-                encrypt.setPublicKey(recipientPublicKey);
-                return encrypt.encrypt(message);
-            }
-
-            decrypt(encryptedMessage) {
-                const decrypt = new JSEncrypt();
-                decrypt.setPrivateKey(this.keys.privateKey);
-                return decrypt.decrypt(encryptedMessage);
-            }
-
-            sendMessage(message) {
-                const encryptedMessages = [];
-                this.participantsPublicKeys.forEach((publicKey, clientId) => {
-                    const encrypted = this.encrypt(JSON.stringify({
-                        content: message,
-                        sender: this.mqttConfig.clientId,
-                        timestamp: Date.now()
-                    }), publicKey);
-                    
-                    encryptedMessages.push({
-                        recipient: clientId,
-                        content: encrypted
-                    });
-                });
-
-                this.client.publish(this.topic, JSON.stringify(encryptedMessages));
-            }
-
-            handleChatMessage(message) {
-                try {
-                    const encryptedMessages = JSON.parse(message.toString());
-                    const myMessage = encryptedMessages.find(
-                        msg => msg.recipient === this.mqttConfig.clientId
-                    );
-
-                    if (myMessage) {
-                        const decrypted = this.decrypt(myMessage.content);
-                        if (decrypted) {
-                            const messageData = JSON.parse(decrypted);
-                            this.onMessageCallback?.(messageData);
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error handling chat message:', error);
-                }
-            }
-
-            onMessage(callback) {
-                this.onMessageCallback = callback;
-            }
-        }
-
-        // 创建聊天室实例
-        const chatRoom = new ChatRoom('public-room');
-
-        // 显示消息的函数
-        function displayMessage(message) {
-            const chatContainer = document.getElementById('chatContainer');
-            const messageElement = document.createElement('div');
-            messageElement.classList.add('message');
-            messageElement.classList.add(
-                message.sender === chatRoom.mqttConfig.clientId ? 'sent' : 'received'
-            );
+        // 连接MQTT
+        function connectMQTT() {
+            client = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
             
-            const time = new Date(message.timestamp).toLocaleTimeString();
-            messageElement.innerHTML = `
-                <strong>${message.sender === chatRoom.mqttConfig.clientId ? '我' : '其他人'}</strong>
-                <span style="float: right; font-size: 0.8em;">${time}</span><br>
-                ${message.content}
+            client.on('connect', () => {
+                console.log('Connected to MQTT broker');
+                showMessage('系统', '已连接到服务器');
+            });
+
+            client.on('message', (topic, message) => {
+                try {
+                    const decrypt = new JSEncrypt();
+                    decrypt.setPrivateKey(myPrivateKey);
+                    const decrypted = decrypt.decrypt(message.toString());
+                    if(decrypted) {
+                        showMessage('收到', decrypted);
+                    }
+                } catch (error) {
+                    console.error('解密失败:', error);
+                }
+            });
+        }
+
+        // 生成密钥对
+        function generateKeys() {
+            const encrypt = new JSEncrypt({default_key_size: 1024});
+            encrypt.getKey();
+            myPrivateKey = encrypt.getPrivateKey();
+            myPublicKey = encrypt.getPublicKey();
+            
+            document.getElementById('myKeys').innerHTML = `
+                <p><strong>私钥:</strong><br><small>${myPrivateKey}</small></p>
+                <p><strong>公钥(分享给他人):</strong><br><small>${myPublicKey}</small></p>
             `;
-            
-            chatContainer.appendChild(messageElement);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
-        // 设置消息接收回调
-        chatRoom.onMessage((message) => {
-            displayMessage(message);
-        });
+        // 订阅主题
+        function subscribe() {
+            const topic = document.getElementById('subTopic').value.trim();
+            if(!topic) {
+                alert('请输入要订阅的主题');
+                return;
+            }
+            client.subscribe(topic);
+            showMessage('系统', '已订阅主题: ' + topic);
+        }
 
-        // 发送消息函数
+        // 发送消息
         function sendMessage() {
-            const input = document.getElementById('messageInput');
-            const message = input.value.trim();
+            const topic = document.getElementById('pubTopic').value.trim();
+            const message = document.getElementById('message').value.trim();
             
-            if (message) {
-                chatRoom.sendMessage(message);
-                input.value = '';
+            if(!topic || !message) {
+                alert('请输入完整的发送信息');
+                return;
+            }
+
+            const encrypt = new JSEncrypt();
+            encrypt.setPublicKey(topic);
+            const encrypted = encrypt.encrypt(message);
+
+            if(encrypted) {
+                client.publish(topic, encrypted);
+                showMessage('发送', message);
+                document.getElementById('message').value = '';
+            } else {
+                alert('加密失败');
             }
         }
 
-        // 显示密钥信息
-        function showKeys() {
-            const keyInfo = document.getElementById('keyInfo');
-            const keys = chatRoom.keys;
-            keyInfo.innerHTML = `
-                <h3>当前密钥信息:</h3>
-                <p><strong>公钥:</strong><br><small>${keys.publicKey}</small></p>
-                <p><strong>私钥:</strong><br><small>${keys.privateKey}</small></p>
-            `;
+        // 显示消息
+        function showMessage(type, content) {
+            const chatBox = document.getElementById('chatBox');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type === '发送' ? 'sent' : 'received'}`;
+            messageDiv.textContent = `${type}: ${content}`;
+            chatBox.appendChild(messageDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
         }
 
-        // 生成新密钥对
-        function generateNewKeys() {
-            const keys = chatRoom.keyManager.generateKeyPair();
-            chatRoom.keys = keys;
-            chatRoom.broadcastPublicKey();
-            showKeys();
-        }
-
-        // 回车发送消息
-        document.getElementById('messageInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                sendMessage();
-            }
-        });
+        // 页面加载时连接MQTT
+        connectMQTT();
     </script>
 </body>
 </html>
