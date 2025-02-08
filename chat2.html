@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RSA加密聊天室</title>
+    <!-- 修改样式部分保持不变，主要调整HTML结构和JavaScript逻辑 -->
+    <style>
+        /* 原有样式保持不变 */
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="login-container" id="loginForm">
+            <h2 style="margin-bottom: 24px;">RSA加密聊天室</h2>
+            <div class="input-group">
+                <label class="input-label">昵称</label>
+                <input type="text" id="nickname" placeholder="请输入你的昵称">
+            </div>
+            
+            <div id="keySection">
+                <div class="input-group">
+                    <label class="input-label">你的公钥（请分享）</label>
+                    <textarea id="publicKey" readonly rows="4" style="width:100%"></textarea>
+                </div>
+                <button onclick="generateKeyPair()" style="margin-bottom: 16px;">生成密钥对</button>
+                
+                <div class="input-group">
+                    <label class="input-label">对方公钥</label>
+                    <textarea id="targetPublicKey" rows="4" placeholder="粘贴对方的公钥" style="width:100%"></textarea>
+                </div>
+            </div>
+
+            <button onclick="joinChat()">加入聊天</button>
+        </div>
+
+        <!-- 聊天容器保持不变 -->
+    </div>
+
+    <!-- 改用支持RSA的加密库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.3.2/jsencrypt.min.js"></script>
+    <script src="https://npm.liuts.nyc.mn/mqtt/dist/mqtt.min.js"></script>
+    <script>
+        let client;
+        let nickname = '';
+        let targetPublicKey = null;
+        let crypt = new JSEncrypt();
+        let decrypt = new JSEncrypt();
+        let myTopic = '';
+
+        function generateKeyPair() {
+            crypt.getKey(() => {
+                decrypt.getKey(() => {
+                    document.getElementById('publicKey').value = crypt.getPublicKey();
+                    // 将私钥保存在内存中，不暴露给用户
+                    document.getElementById('keySection').style.display = 'block';
+                });
+            });
+        }
+
+        function joinChat() {
+            nickname = document.getElementById('nickname').value.trim();
+            targetPublicKey = document.getElementById('targetPublicKey').value.trim();
+            const myPublicKey = document.getElementById('publicKey').value;
+
+            if (!nickname || !targetPublicKey || !myPublicKey) {
+                alert('请填写所有字段并生成密钥对！');
+                return;
+            }
+
+            // 生成自己的订阅topic（使用自己的公钥哈希）
+            myTopic = `rsa-chat/${CryptoJS.MD5(myPublicKey).toString()}`;
+            
+            // 隐藏登录界面，显示聊天界面（同原代码）
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('chatContainer').style.display = 'flex';
+
+            // 连接MQTT服务器（配置同原代码）
+            const options = {
+                username: 'client',
+                password: 'client',
+                protocol: 'wss',
+                clientId: 'mqttjs_' + Math.random().toString(16).substr(2, 8)
+            };
+
+            client = mqtt.connect('wss://broker.emqx.io:8084/mqtt', options);
+
+            client.on('connect', () => {
+                document.getElementById('status').textContent = '已连接';
+                document.getElementById('status').className = 'status connected';
+                
+                // 订阅自己的topic
+                client.subscribe(myTopic);
+
+                // 发送系统消息（使用对方公钥加密）
+                const joinMessage = {
+                    type: 'join',
+                    nickname: nickname,
+                    timestamp: new Date().toISOString()
+                };
+                sendEncryptedMessage(joinMessage);
+            });
+
+            // 其他MQTT事件处理保持不变
+        }
+
+        function sendEncryptedMessage(messageObj) {
+            const encrypt = new JSEncrypt();
+            encrypt.setPublicKey(targetPublicKey);
+            
+            const messageString = JSON.stringify(messageObj);
+            const encrypted = encrypt.encrypt(messageString);
+            
+            if (!encrypted) {
+                alert('加密失败，请检查对方公钥是否正确');
+                return;
+            }
+
+            // 生成目标topic（使用对方公钥哈希）
+            const targetTopic = `rsa-chat/${CryptoJS.MD5(targetPublicKey).toString()}`;
+            client.publish(targetTopic, encrypted);
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+
+            if (!text) return;
+
+            const message = {
+                type: 'message',
+                nickname: nickname,
+                content: text,
+                timestamp: new Date().toISOString()
+            };
+
+            sendEncryptedMessage(message);
+            input.value = '';
+            input.focus();
+            
+            // 本地显示自己发送的消息（不经过解密）
+            message.timestamp = new Date();
+            displayMessage(message, true);
+        }
+
+        function displayMessage(encryptedMessage, isSent = false) {
+            // 如果是自己发送的消息直接显示
+            if (isSent) {
+                createMessageElement(encryptedMessage, true);
+                return;
+            }
+
+            // 尝试解密消息
+            try {
+                const decrypted = decrypt.decrypt(encryptedMessage.toString());
+                if (!decrypted) {
+                    console.log('解密失败或不是发给你的消息');
+                    return;
+                }
+
+                const messageObj = JSON.parse(decrypted);
+                createMessageElement(messageObj, false);
+            } catch (e) {
+                console.error('解密失败:', e);
+            }
+        }
+
+        function createMessageElement(messageObj, isSent) {
+            const messagesDiv = document.getElementById('messages');
+            const messageElement = document.createElement('div');
+            const time = new Date(messageObj.timestamp);
+
+            // 原有消息显示逻辑保持不变
+            // ...
+        }
+
+        // 其他辅助函数和事件监听保持不变
+    </script>
+</body>
+</html>
