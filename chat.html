@@ -26,6 +26,7 @@
 <body>
     <div class="container">
         <h2>加密聊天</h2>
+        <div id="connectionStatus">未连接</div>
         
         <div>
             <h3>密钥管理</h3>
@@ -35,13 +36,14 @@
 
         <div>
             <h3>订阅主题</h3>
-            <input type="text" id="subTopic" placeholder="输入要订阅的主题(公钥)" style="width: 300px;">
+            <input type="text" id="subTopic" placeholder="输入要订阅的主题" style="width: 300px;">
             <button onclick="subscribe()">订阅</button>
+            <div id="subscriptions"></div>
         </div>
 
         <div>
             <h3>发送消息</h3>
-            <input type="text" id="pubTopic" placeholder="输入对方的公钥" style="width: 300px;">
+            <input type="text" id="pubTopic" placeholder="输入发送主题" style="width: 300px;">
             <br>
             <textarea id="message" rows="3" placeholder="输入消息"></textarea>
             <br>
@@ -55,26 +57,48 @@
         let client;
         let myPrivateKey = '';
         let myPublicKey = '';
+        let subscribedTopics = new Set();
 
         // 连接MQTT
         function connectMQTT() {
-            client = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
+            const options = {
+                clean: true,
+                connectTimeout: 4000,
+                clientId: 'client_' + Math.random().toString(16).substr(2, 8)
+            };
+
+            client = mqtt.connect('wss://broker.emqx.io:8084/mqtt', options);
             
             client.on('connect', () => {
                 console.log('Connected to MQTT broker');
+                document.getElementById('connectionStatus').textContent = '已连接';
                 showMessage('系统', '已连接到服务器');
             });
 
+            client.on('disconnect', () => {
+                document.getElementById('connectionStatus').textContent = '已断开连接';
+                showMessage('系统', '已断开连接');
+            });
+
+            client.on('error', (error) => {
+                console.error('MQTT Error:', error);
+                showMessage('系统', '连接错误: ' + error.message);
+            });
+
             client.on('message', (topic, message) => {
+                console.log('收到消息:', topic, message.toString());
                 try {
                     const decrypt = new JSEncrypt();
                     decrypt.setPrivateKey(myPrivateKey);
                     const decrypted = decrypt.decrypt(message.toString());
                     if(decrypted) {
                         showMessage('收到', decrypted);
+                    } else {
+                        showMessage('系统', '解密失败');
                     }
                 } catch (error) {
                     console.error('解密失败:', error);
+                    showMessage('系统', '解密错误: ' + error.message);
                 }
             });
         }
@@ -99,12 +123,36 @@
                 alert('请输入要订阅的主题');
                 return;
             }
-            client.subscribe(topic);
-            showMessage('系统', '已订阅主题: ' + topic);
+            if(!client.connected) {
+                alert('未连接到服务器');
+                return;
+            }
+            
+            client.subscribe(topic, (err) => {
+                if(err) {
+                    showMessage('系统', '订阅失败: ' + err.message);
+                } else {
+                    subscribedTopics.add(topic);
+                    showMessage('系统', '已订阅主题: ' + topic);
+                    updateSubscriptions();
+                }
+            });
+        }
+
+        // 更新订阅列表显示
+        function updateSubscriptions() {
+            const subsDiv = document.getElementById('subscriptions');
+            subsDiv.innerHTML = '<strong>当前订阅:</strong><br>' + 
+                Array.from(subscribedTopics).join('<br>');
         }
 
         // 发送消息
         function sendMessage() {
+            if(!client.connected) {
+                alert('未连接到服务器');
+                return;
+            }
+
             const topic = document.getElementById('pubTopic').value.trim();
             const message = document.getElementById('message').value.trim();
             
@@ -118,9 +166,14 @@
             const encrypted = encrypt.encrypt(message);
 
             if(encrypted) {
-                client.publish(topic, encrypted);
-                showMessage('发送', message);
-                document.getElementById('message').value = '';
+                client.publish(topic, encrypted, {qos: 1}, (err) => {
+                    if(err) {
+                        showMessage('系统', '发送失败: ' + err.message);
+                    } else {
+                        showMessage('发送', message);
+                        document.getElementById('message').value = '';
+                    }
+                });
             } else {
                 alert('加密失败');
             }
