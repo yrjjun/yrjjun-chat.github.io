@@ -320,8 +320,7 @@
             
             // 连接MQTT
             const clientId = `rsaChat_${Date.now()}_${Math.random().toString(16).substr(2, 6)}`;
-            client = mqtt.connect('
-wss://broker.emqx.io:8084/mqtt', {
+            client = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
                 clientId: clientId,
                 clean: true,
                 reconnectPeriod: 5000
