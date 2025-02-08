@@ -21,12 +21,15 @@
         .sent { background: #d4edda; margin-left: 20%; }
         textarea { width: 100%; margin: 10px 0; }
         button { margin: 5px; padding: 5px 10px; }
+        #connectionStatus.connected { color: green; }
+        #connectionStatus.disconnected { color: red; }
     </style>
 </head>
 <body>
     <div class="container">
         <h2>加密聊天</h2>
-        <div id="connectionStatus">未连接</div>
+        <div id="connectionStatus" class="disconnected">未连接</div>
+        <button onclick="reconnect()">重新连接</button>
         
         <div>
             <h3>密钥管理</h3>
@@ -54,56 +57,104 @@
     </div>
 
     <script>
-        let client;
+        let client = null;
         let myPrivateKey = '';
         let myPublicKey = '';
         let subscribedTopics = new Set();
+        let isConnected = false;
 
         // 连接MQTT
         function connectMQTT() {
+            if (client) {
+                client.end(true);
+            }
+
             const options = {
                 clean: true,
                 connectTimeout: 4000,
-                clientId: 'client_' + Math.random().toString(16).substr(2, 8)
+                clientId: 'client_' + Math.random().toString(16).substr(2, 8),
+                keepalive: 60,
+                reconnectPeriod: 1000
             };
 
-            client = mqtt.connect('wss://broker.emqx.io:8084/mqtt', options);
-            
-            client.on('connect', () => {
-                console.log('Connected to MQTT broker');
-                document.getElementById('connectionStatus').textContent = '已连接';
-                showMessage('系统', '已连接到服务器');
-            });
+            try {
+                client = mqtt.connect('wss://broker.emqx.io:8084/mqtt', options);
+                
+                client.on('connect', () => {
+                    console.log('Connected to MQTT broker');
+                    isConnected = true;
+                    const statusElement = document.getElementById('connectionStatus');
+                    statusElement.textContent = '已连接';
+                    statusElement.className = 'connected';
+                    showMessage('系统', '已连接到服务器');
+                    
+                    // 重新订阅之前的主题
+                    subscribedTopics.forEach(topic => {
+                        client.subscribe(topic);
+                    });
+                });
 
-            client.on('disconnect', () => {
-                document.getElementById('connectionStatus').textContent = '已断开连接';
-                showMessage('系统', '已断开连接');
-            });
+                client.on('disconnect', () => {
+                    handleDisconnect();
+                });
 
-            client.on('error', (error) => {
-                console.error('MQTT Error:', error);
-                showMessage('系统', '连接错误: ' + error.message);
-            });
+                client.on('offline', () => {
+                    handleDisconnect();
+                });
 
-            client.on('message', (topic, message) => {
-                console.log('收到消息:', topic, message.toString());
-                try {
-                    const decrypt = new JSEncrypt();
-                    decrypt.setPrivateKey(myPrivateKey);
-                    const decrypted = decrypt.decrypt(message.toString());
-                    if(decrypted) {
-                        showMessage('收到', decrypted);
-                    } else {
-                        showMessage('系统', '解密失败');
-                    }
-                } catch (error) {
-                    console.error('解密失败:', error);
-                    showMessage('系统', '解密错误: ' + error.message);
-                }
-            });
+                client.on('error', (error) => {
+                    console.error('MQTT Error:', error);
+                    showMessage('系统', '连接错误: ' + error.message);
+                    handleDisconnect();
+                });
+
+                client.on('message', (topic, message) => {
+                    console.log('收到消息:', topic, message.toString());
+                    handleIncomingMessage(topic, message);
+                });
+
+            } catch (error) {
+                console.error('连接错误:', error);
+                showMessage('系统', '连接失败: ' + error.message);
+                handleDisconnect();
+            }
         }
 
-        // 生成密钥对
+        function handleDisconnect() {
+            isConnected = false;
+            const statusElement = document.getElementById('connectionStatus');
+            statusElement.textContent = '已断开连接';
+            statusElement.className = 'disconnected';
+            showMessage('系统', '已断开连接');
+        }
+
+        function reconnect() {
+            showMessage('系统', '尝试重新连接...');
+            connectMQTT();
+        }
+
+        function handleIncomingMessage(topic, message) {
+            try {
+                const messageStr = message.toString();
+                console.log('解密前消息:', messageStr);
+                
+                const decrypt = new JSEncrypt();
+                decrypt.setPrivateKey(myPrivateKey);
+                const decrypted = decrypt.decrypt(messageStr);
+                
+                if(decrypted) {
+                    console.log('解密后消息:', decrypted);
+                    showMessage('收到', decrypted);
+                } else {
+                    console.log('解密失败');
+                    showMessage('系统', '解密失败 - 可能不是发给你的消息');
+                }
+            } catch (error) {
+                console.error('消息处理错误:', error);
+                showMessage('系统', '消息处理错误: ' + error.message);
+            }
+        }
+
         function generateKeys() {
             const encrypt = new JSEncrypt({default_key_size: 1024});
             encrypt.getKey();
@@ -116,19 +167,18 @@
             `;
         }
 
-        // 订阅主题
         function subscribe() {
             const topic = document.getElementById('subTopic').value.trim();
             if(!topic) {
                 alert('请输入要订阅的主题');
                 return;
             }
-            if(!client.connected) {
-                alert('未连接到服务器');
+            if(!isConnected) {
+                alert('未连接到服务器,请先重新连接');
                 return;
             }
             
-            client.subscribe(topic, (err) => {
+            client.subscribe(topic, {qos: 1}, (err) => {
                 if(err) {
                     showMessage('系统', '订阅失败: ' + err.message);
                 } else {
@@ -139,17 +189,15 @@
             });
         }
 
-        // 更新订阅列表显示
         function updateSubscriptions() {
             const subsDiv = document.getElementById('subscriptions');
             subsDiv.innerHTML = '<strong>当前订阅:</strong><br>' + 
                 Array.from(subscribedTopics).join('<br>');
         }
 
-        // 发送消息
         function sendMessage() {
-            if(!client.connected) {
-                alert('未连接到服务器');
+            if(!isConnected) {
+                alert('未连接到服务器,请先重新连接');
                 return;
             }
 
@@ -161,25 +209,29 @@
                 return;
             }
 
-            const encrypt = new JSEncrypt();
-            encrypt.setPublicKey(topic);
-            const encrypted = encrypt.encrypt(message);
+            try {
+                const encrypt = new JSEncrypt();
+                encrypt.setPublicKey(topic);
+                const encrypted = encrypt.encrypt(message);
 
-            if(encrypted) {
-                client.publish(topic, encrypted, {qos: 1}, (err) => {
-                    if(err) {
-                        showMessage('系统', '发送失败: ' + err.message);
-                    } else {
-                        showMessage('发送', message);
-                        document.getElementById('message').value = '';
-                    }
-                });
-            } else {
-                alert('加密失败');
+                if(encrypted) {
+                    client.publish(topic, encrypted, {qos: 1}, (err) => {
+                        if(err) {
+                            showMessage('系统', '发送失败: ' + err.message);
+                        } else {
+                            showMessage('发送', message);
+                            document.getElementById('message').value = '';
+                        }
+                    });
+                } else {
+                    alert('加密失败,请检查接收方公钥是否正确');
+                }
+            } catch (error) {
+                console.error('发送错误:', error);
+                showMessage('系统', '发送错误: ' + error.message);
             }
         }
 
-        // 显示消息
         function showMessage(type, content) {
             const chatBox = document.getElementById('chatBox');
             const messageDiv = document.createElement('div');
@@ -191,6 +243,13 @@
 
         // 页面加载时连接MQTT
         connectMQTT();
+
+        // 添加页面关闭前的清理
+        window.onbeforeunload = function() {
+            if(client) {
+                client.end();
+            }
+        };
     </script>
 </body>
 </html>
