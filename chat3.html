@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>混合加密聊天室</title>
+    <style>
+        /* 保持原有样式不变，新增以下样式 */
+        .encryption-status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            background: #28a745;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .encryption-status::before {
+            content: "🔒";
+            font-size: 1.2em;
+        }
+        .encryption-status.inactive {
+            background: #dc3545;
+        }
+        .encryption-status.inactive::before {
+            content: "⚠️";
+        }
+    </style>
+</head>
+<body>
+    <!-- 保持原有HTML结构不变 -->
+    
+    <div class="encryption-status" id="encryptionStatus">正在建立安全连接...</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsencrypt/3.3.2/jsencrypt.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script>
+        // 新增常量
+        const MessageType = {
+            JOIN: 'join',
+            MESSAGE: 'message',
+            KEY_EXCHANGE: 'key_exchange',
+            SYSTEM: 'system'
+        };
+
+        // 修改后的变量
+        let aesKey = null;
+        let keyExchangeTimeout = null;
+        const KEY_EXCHANGE_TIMEOUT = 5000;
+
+        // 修改generateKeyPair函数（保持不变）
+
+        // 新增AES密钥生成函数
+        function generateAESKey() {
+            return CryptoJS.lib.WordArray.random(32).toString();
+        }
+
+        // 修改joinChat函数
+        function joinChat() {
+            // ...原有代码...
+
+            client.on('connect', () => {
+                // ...原有代码...
+                
+                // 生成并发送AES密钥
+                aesKey = generateAESKey();
+                sendKeyExchange(aesKey);
+                startKeyExchangeTimer();
+            });
+
+            // ...原有代码...
+        }
+
+        // 新增密钥交换函数
+        function sendKeyExchange(key) {
+            const encryptor = new JSEncrypt();
+            encryptor.setPublicKey(targetPublicKey);
+            const encryptedKey = encryptor.encrypt(key);
+
+            const message = {
+                type: MessageType.KEY_EXCHANGE,
+                key: encryptedKey,
+                timestamp: new Date().toISOString()
+            };
+            sendEncryptedMessage(message);
+        }
+
+        // 新增超时处理
+        function startKeyExchangeTimer() {
+            keyExchangeTimeout = setTimeout(() => {
+                if (!aesKey) {
+                    showError('密钥交换超时，正在重试...');
+                    sendKeyExchange(generateAESKey());
+                    startKeyExchangeTimer();
+                }
+            }, KEY_EXCHANGE_TIMEOUT);
+        }
+
+        // 修改消息处理逻辑
+        client.on('message', (topic, payload) => {
+            if (topic !== myTopic) return;
+
+            try {
+                const decrypted = decrypt.decrypt(payload.toString());
+                if (!decrypted) return;
+
+                const msg = JSON.parse(decrypted);
+                switch (msg.type) {
+                    case MessageType.KEY_EXCHANGE:
+                        handleKeyExchange(msg);
+                        break;
+                    case MessageType.MESSAGE:
+                        handleMessage(msg);
+                        break;
+                    case MessageType.JOIN:
+                        handleSystemMessage(msg);
+                        break;
+                }
+            } catch (e) {
+                console.warn('消息处理失败:', e);
+            }
+        });
+
+        // 新增密钥处理函数
+        function handleKeyExchange(msg) {
+            try {
+                const receivedKey = decrypt.decrypt(msg.key);
+                if (receivedKey) {
+                    aesKey = receivedKey;
+                    updateEncryptionStatus(true);
+                    clearTimeout(keyExchangeTimeout);
+                    showSystemMessage('安全连接已建立');
+                }
+            } catch (e) {
+                console.error('密钥解密失败:', e);
+            }
+        }
+
+        // 修改消息处理函数
+        function handleMessage(msg) {
+            try {
+                if (aesKey) {
+                    const bytes = CryptoJS.AES.decrypt(msg.content, aesKey);
+                    msg.content = bytes.toString(CryptoJS.enc.Utf8);
+                    if (!msg.content) throw new Error('解密失败');
+                }
+                displayMessage(msg, msg.nickname === nickname);
+            } catch (e) {
+                showError('消息解密失败');
+            }
+        }
+
+        // 修改发送消息函数
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const content = input.value.trim();
+            if (!content) return;
+
+            const message = {
+                type: MessageType.MESSAGE,
+                nickname: nickname,
+                content: aesKey ? CryptoJS.AES.encrypt(content, aesKey).toString() : content,
+                timestamp: new Date().toISOString()
+            };
+
+            // 如果尚未完成密钥交换，使用RSA加密
+            if (!aesKey) {
+                const encryptor = new JSEncrypt();
+                encryptor.setPublicKey(targetPublicKey);
+                message.content = encryptor.encrypt(content);
+            }
+
+            sendEncryptedMessage(message);
+            displayMessage({ ...message, content }, true);
+            input.value = '';
+        }
+
+        // 新增加密状态显示
+        function updateEncryptionStatus(active) {
+            const status = document.getElementById('encryptionStatus');
+            status.classList.toggle('inactive', !active);
+            status.textContent = active ? '端到端加密已启用' : '加密连接不可用';
+        }
+
+        // 修改系统消息处理
+        function handleSystemMessage(msg) {
+            displayMessage({
+                ...msg,
+                content: `${msg.nickname} 加入了聊天`,
+                type: MessageType.SYSTEM
+            }, false);
+        }
+
+        // 初始化加密状态
+        updateEncryptionStatus(false);
+    </script>
+</body>
+</html>
